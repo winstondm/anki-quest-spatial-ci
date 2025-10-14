@@ -6,7 +6,7 @@ ROOT="$GITHUB_WORKSPACE"
 ANKI_DIR="$ROOT/Anki-Android"
 
 # 1) Clonar AnkiDroid (branch estável)
-git clone --depth=1 --branch stable https://github.com/ankidroid/Anki-Android.git "$ANKI_DIR"
+git clone --depth=1 --branch main https://github.com/ankidroid/Anki-Android.git "$ANKI_DIR"
 
 # 2) Copiar nosso módulo spatial-shell para dentro do projeto do AnkiDroid
 cp -r "$ROOT/spatial-shell" "$ANKI_DIR/spatial-shell"
