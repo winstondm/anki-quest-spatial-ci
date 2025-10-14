@@ -1,0 +1,36 @@
+name: Build Anki Spatial APK
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Accept licenses
+        run: yes | sdkmanager --licenses
+
+      - name: Install NDK & CMake
+        run: |
+          sdkmanager "ndk;26.3.11579264" "cmake;3.22.1"
+
+      - name: Prepare & Build
+        run: bash ./setup-ci.sh
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: anki-spatial-apk
+          path: output-apk/*.apk
