@@ -1,0 +1,31 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    package="com.winston.anki.spatial">
+
+    <application
+        android:allowBackup="false"
+        android:label="Anki Spatial"
+        android:icon="@mipmap/ic_launcher">
+
+        <meta-data
+            android:name="com.oculus.supportedDevices"
+            android:value="quest2|quest3|quest3s" />
+
+        <activity
+            android:name=".AnkiSpatialActivity"
+            android:exported="true"
+            android:resizeableActivity="true"
+            android:configChanges="orientation|screenSize|screenLayout|keyboard|keyboardHidden|smallestScreenSize|uiMode">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <activity
+            android:name="com.ichi2.anki.CollectionOpenActivity"
+            android:allowEmbedded="true" />
+        <activity
+            android:name="com.ichi2.anki.Reviewer"
+            android:allowEmbedded="true" />
+    </application>
+</manifest>

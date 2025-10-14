@@ -1,0 +1,4 @@
+<resources>
+    <item name="panel_decks" type="id"/>
+    <item name="panel_review" type="id"/>
+</resources>
