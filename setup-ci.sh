@@ -1,172 +1,188 @@
 #!/usr/bin/env bash
-set -euxo pipefail
+set -euo pipefail
 
-ROOT="$GITHUB_WORKSPACE"
+ROOT="$(pwd)"
 ANKI_DIR="$ROOT/Anki-Android"
 
-# 1) Clonar AnkiDroid (branch principal)
+echo ">> Clonando AnkiDroid (main) ..."
+rm -rf "$ANKI_DIR"
 git clone --depth=1 --branch main https://github.com/ankidroid/Anki-Android.git "$ANKI_DIR"
 
-# 2) Detectar o módulo do app (preferimos a pasta AnkiDroid; fallback por varredura)
-if [ -d "$ANKI_DIR/AnkiDroid" ]; then
-  APP_DIR="$ANKI_DIR/AnkiDroid"
-else
-  # procura o primeiro build.gradle(.kts) que tenha "namespace = \"com.ichi2.anki\"" ou aplique plugin de app via alias
-  APP_GRADLE_CAND="$(grep -rl --include=build.gradle --include=build.gradle.kts -E 'namespace\s*=\s*"com\.ichi2\.anki"|android\.application' "$ANKI_DIR" | head -n1 || true)"
-  if [ -z "$APP_GRADLE_CAND" ]; then
-    echo "ERRO: não consegui localizar o módulo do app. Estrutura mudou. Me envie a listagem de pastas na raiz do repo." >&2
-    exit 1
-  fi
-  APP_DIR="$(dirname "$APP_GRADLE_CAND")"
-fi
+APP_DIR="$ANKI_DIR/AnkiDroid"
+GRADLE_KTS="$APP_DIR/build.gradle.kts"
+GRADLE_GROOVY="$APP_DIR/build.gradle"
 
-APP_GRADLE_KTS="$APP_DIR/build.gradle.kts"
-APP_GRADLE_GROOVY="$APP_DIR/build.gradle"
-if [ -f "$APP_GRADLE_KTS" ]; then
-  APP_GRADLE="$APP_GRADLE_KTS"
+if [[ -f "$GRADLE_KTS" ]]; then
+  APP_GRADLE="$GRADLE_KTS"
   EXT="kts"
-elif [ -f "$APP_GRADLE_GROOVY" ]; then
-  APP_GRADLE="$APP_GRADLE_GROOVY"
+elif [[ -f "$GRADLE_GROOVY" ]]; then
+  APP_GRADLE="$GRADLE_GROOVY"
   EXT="gradle"
 else
-  echo "ERRO: não encontrei build.gradle(.kts) dentro de $APP_DIR" >&2
+  echo "ERRO: Não achei build.gradle(.kts) em $APP_DIR"
   exit 1
 fi
 
-echo "Módulo app: $APP_DIR  (arquivo: $APP_GRADLE)"
+echo ">> Injetando plugin Spatial SDK (com.meta.spatial.plugin) em $APP_GRADLE ..."
+if [[ "$EXT" == "kts" ]]; then
+  # adiciona o plugin dentro do bloco plugins { }
+  awk 'BEGIN{p=0}
+    {
+      print
+      if (!p && $0 ~ /plugins\s*\{/) {
+        print "    id(\"com.meta.spatial.plugin\") version \"0.8.0\""
+        p=1
+      }
+    }' "$APP_GRADLE" > "$APP_GRADLE.tmp"
+  mv "$APP_GRADLE.tmp" "$APP_GRADLE"
+else
+  # Groovy: idem
+  awk 'BEGIN{p=0}
+    {
+      print
+      if (!p && $0 ~ /plugins\s*\{/) {
+        print "    id \"com.meta.spatial.plugin\" version \"0.8.0\""
+        p=1
+      }
+    }' "$APP_GRADLE" > "$APP_GRADLE.tmp"
+  mv "$APP_GRADLE.tmp" "$APP_GRADLE"
+fi
 
-# 3) Injetar plugin do Spatial SDK (no bloco plugins)
-if ! grep -q 'com.meta.spatial.plugin' "$APP_GRADLE"; then
-  if [ "$EXT" = "kts" ]; then
-    awk 'BEGIN{p=0}
-    { print; if(!p && $0 ~ /plugins\s*\{/) { print "    id(\"com.meta.spatial.plugin\") version \"0.8.0\""; p=1 } }' \
-      "$APP_GRADLE" > "$APP_GRADLE.tmp" && mv "$APP_GRADLE.tmp" "$APP_GRADLE"
+echo ">> Garantindo dependências do Spatial SDK ..."
+if ! grep -q 'com.meta.spatial:meta-spatial-sdk' "$APP_GRADLE"; then
+  if [[ "$EXT" == "kts" ]]; then
+    awk 'BEGIN{d=0}
+      {
+        print
+        if (!d && $0 ~ /dependencies\s*\{/) {
+          print "    implementation(\"com.meta.spatial:meta-spatial-sdk:0.8.0\")"
+          print "    implementation(\"com.meta.spatial:meta-spatial-sdk-toolkit:0.8.0\")"
+          print "    implementation(\"com.meta.spatial:meta-spatial-sdk-vr:0.8.0\")"
+          print "    implementation(\"com.meta.spatial:meta-spatial-sdk-physics:0.8.0\")"
+          d=1
+        }
+      }' "$APP_GRADLE" > "$APP_GRADLE.tmp"
   else
-    awk 'BEGIN{p=0}
-    { print; if(!p && $0 ~ /plugins\s*\{/) { print "    id \"com.meta.spatial.plugin\" version \"0.8.0\""; p=1 } }' \
-      "$APP_GRADLE" > "$APP_GRADLE.tmp" && mv "$APP_GRADLE.tmp" "$APP_GRADLE"
+    awk 'BEGIN{d=0}
+      {
+        print
+        if (!d && $0 ~ /dependencies\s*\{/) {
+          print "    implementation \"com.meta.spatial:meta-spatial-sdk:0.8.0\""
+          print "    implementation \"com.meta.spatial:meta-spatial-sdk-toolkit:0.8.0\""
+          print "    implementation \"com.meta.spatial:meta-spatial-sdk-vr:0.8.0\""
+          print "    implementation \"com.meta.spatial:meta-spatial-sdk-physics:0.8.0\""
+          d=1
+        }
+      }' "$APP_GRADLE" > "$APP_GRADLE.tmp"
   fi
+  mv "$APP_GRADLE.tmp" "$APP_GRADLE"
 fi
 
-# 4) Adicionar dependências do Spatial SDK (em dependencies { })
-if ! grep -q 'meta-spatial-sdk' "$APP_GRADLE"; then
-  awk 'BEGIN{d=0}
-  {
-    print
-    if (!d && $0 ~ /dependencies\s*\{/) {
-      print "    implementation(\"com.meta.spatial:meta-spatial-sdk:0.8.0\")"
-      print "    implementation(\"com.meta.spatial:meta-spatial-sdk-toolkit:0.8.0\")"
-      print "    implementation(\"com.meta.spatial:meta-spatial-sdk-vr:0.8.0\")"
-      print "    implementation(\"com.meta.spatial:meta-spatial-sdk-physics:0.8.0\")"
-      d=1
-    }
-  }' "$APP_GRADLE" > "$APP_GRADLE.tmp" && mv "$APP_GRADLE.tmp" "$APP_GRADLE"
-fi
+echo ">> Criando fontes/res de DEBUG para atividade imersiva + painel ..."
+DBG_JAVA="$APP_DIR/src/debug/java/com/ichi2/anki/spatial"
+DBG_RES_VAL="$APP_DIR/src/debug/res/values"
+DBG_MANIFEST_DIR="$APP_DIR/src/debug"
+mkdir -p "$DBG_JAVA" "$DBG_RES_VAL" "$DBG_MANIFEST_DIR"
 
-# 5) Criar arquivos em src/debug (Manifest overlay + ids + Activity)
-DBG_SRC="$APP_DIR/src/debug"
-mkdir -p "$DBG_SRC/res/values" "$DBG_SRC/java/com/ichi2/anki/spatial"
-
-# Manifest overlay (não remove o launcher existente; apenas adiciona o nosso)
-cat > "$DBG_SRC/AndroidManifest.xml" <<'EOF'
-<manifest xmlns:android="http://schemas.android.com/apk/res/android"
-          xmlns:tools="http://schemas.android.com/tools"
-          package="com.ichi2.anki">
-  <application>
-    <meta-data
-      android:name="com.oculus.supportedDevices"
-      android:value="quest2|quest3|quest3s" />
-
-    <activity
-      android:name=".spatial.AnkiSpatialActivity"
-      android:exported="true"
-      android:resizeableActivity="true"
-      android:configChanges="orientation|screenSize|screenLayout|keyboard|keyboardHidden|smallestScreenSize|uiMode">
-      <intent-filter>
-        <action android:name="android.intent.action.MAIN"/>
-        <category android:name="android.intent.category.LAUNCHER"/>
-      </intent-filter>
-    </activity>
-
-    <activity
-      android:name=".CollectionOpenActivity"
-      tools:node="merge"
-      tools:replace="allowEmbedded"
-      android:allowEmbedded="true" />
-    <activity
-      android:name=".Reviewer"
-      tools:node="merge"
-      tools:replace="allowEmbedded"
-      android:allowEmbedded="true" />
-  </application>
-</manifest>
-EOF
-
-# ids.xml
-cat > "$DBG_SRC/res/values/ids.xml" <<'EOF'
+cat > "$DBG_RES_VAL/ids.xml" <<'XML'
+<?xml version="1.0" encoding="utf-8"?>
 <resources>
-  <item name="panel_decks" type="id"/>
-  <item name="panel_review" type="id"/>
+    <item name="anki_panel" type="id"/>
 </resources>
-EOF
+XML
 
-# Activity que registra e spawna os paineis 2D
-cat > "$DBG_SRC/java/com/ichi2/anki/spatial/AnkiSpatialActivity.kt" <<'EOF'
+cat > "$DBG_MANIFEST_DIR/AndroidManifest.xml" <<'XML'
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <application>
+        <!-- Atividade imersiva só no build debug, com LAUNCHER para facilitar teste no Quest -->
+        <activity
+            android:name="com.ichi2.anki.spatial.AnkiSpatialActivity"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <!-- Algumas telas do Anki podem ser abertas embutidas como painel (quando aplicável) -->
+        <!-- Se não existir a declaração original, o tools:replace é simplesmente ignorado -->
+        <!-- (Aviso no build é normal) -->
+    </application>
+</manifest>
+XML
+
+cat > "$DBG_JAVA/AnkiSpatialActivity.kt" <<'KOT'
 package com.ichi2.anki.spatial
 
-import android.os.Bundle
-import androidx.activity.ComponentActivity
-import com.meta.spatial.app.PanelRegistration
-import com.meta.spatial.toolkit.ActivityPanelRegistration
+import android.content.Intent
+import com.meta.spatial.toolkit.AppSystemActivity
+import com.meta.spatial.toolkit.PanelRegistration
+import com.meta.spatial.toolkit.IntentPanelRegistration
 import com.meta.spatial.toolkit.UIPanelSettings
-import com.meta.spatial.scene.Entity
-import com.meta.spatial.scene.Transform
-import com.meta.spatial.math.Pose
-import com.meta.spatial.math.Vector3
-import com.ichi2.anki.CollectionOpenActivity
-import com.ichi2.anki.Reviewer
+import com.meta.spatial.toolkit.QuadShapeOptions
+import com.meta.spatial.toolkit.DpDisplayOptions
+import com.meta.spatial.toolkit.Panel
+import com.meta.spatial.toolkit.Transform
+import com.meta.spatial.core.Entity
+import com.meta.spatial.core.Pose
+import com.meta.spatial.core.Vector3
+import com.meta.spatial.core.Quaternion
 import com.ichi2.anki.R
 
-class AnkiSpatialActivity : ComponentActivity() {
-    override fun onCreate(savedInstanceState: Bundle?) {
-        super.onCreate(savedInstanceState)
+/**
+ * Activity imersiva de debug que registra e instancia um painel 2D
+ * com a UI padrão do AnkiDroid (via intent do launcher do próprio app).
+ *
+ * Requer Spatial SDK 0.8.0.
+ */
+class AnkiSpatialActivity : AppSystemActivity() {
 
-        val deckPanel: PanelRegistration = ActivityPanelRegistration(
-            registrationId = R.id.panel_decks,
-            classIdCreator = { CollectionOpenActivity::class.java },
-            settingsCreator = {
-                UIPanelSettings().apply {
-                    minWidthMeters = 0.9f
-                    minHeightMeters = 0.6f
-                    canResize = true
-                    canClose = true
+    override fun registerPanels(): List<PanelRegistration> {
+        // Usamos IntentPanelRegistration para não depender de nomes de Activities internas do Anki.
+        val ankiIntentPanel = IntentPanelRegistration(
+            registrationId = R.id.anki_panel,
+            intentCreator = { _ ->
+                // Pega o intent de launcher do PRÓPRIO pacote (AnkiDroid)
+                // e roda dentro do painel.
+                packageManager.getLaunchIntentForPackage(packageName)?.apply {
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+                } ?: Intent(Intent.ACTION_MAIN).apply {
+                    addCategory(Intent.CATEGORY_LAUNCHER)
+                    `package` = packageName
                 }
+            },
+            settingsCreator = {
+                UIPanelSettings(
+                    shape = QuadShapeOptions(width = 1.0f, height = 0.7f),
+                    display = DpDisplayOptions(width = 1000f, height = 700f)
+                )
             }
         )
+        return listOf(ankiIntentPanel)
+    }
 
-        val reviewPanel: PanelRegistration = ActivityPanelRegistration(
-            registrationId = R.id.panel_review,
-            classIdCreator = { Reviewer::class.java },
-            settingsCreator = {
-                UIPanelSettings().apply {
-                    minWidthMeters = 0.9f
-                    minHeightMeters = 0.6f
-                    canResize = true
-                    canClose = true
-                }
-            }
+    override fun onSceneReady() {
+        super.onSceneReady()
+
+        // Cria uma entidade de painel posicionada ~1.2m à frente, 1.3m de altura
+        Entity.createPanelEntity(
+            R.id.anki_panel,
+            Transform(
+                Pose(
+                    Vector3(0f, 1.3f, -1.2f),
+                    // rotação padrão “de frente”
+                    Quaternion(1.0f, 0f, 0f, 0f)
+                )
+            ),
+            // Dica: adicione Grabbable() se quiser pegar/mover o painel com as mãos
         )
-
-        Entity.createPanelEntity(R.id.panel_decks, Transform(Pose(Vector3(0.0f, 0.0f, -1.2f))))
-        Entity.createPanelEntity(R.id.panel_review, Transform(Pose(Vector3(0.8f, 0.0f, -1.2f))))
     }
 }
-EOF
+KOT
 
-# 6) Build debug (funciona para sideload no Quest)
+echo ">> Compilando variante debug Play (gera APK instalável) ..."
 cd "$ANKI_DIR"
-./gradlew --no-daemon "$APP_DIR:assembleDebug" || ./gradlew --no-daemon :AnkiDroid:assembleDebug
+/usr/bin/env bash ./gradlew --no-daemon :AnkiDroid:assemblePlayDebug
 
-# 7) Exportar APK(s)
-mkdir -p "$ROOT/output-apk"
-find "$ANKI_DIR" -type f -name "*.apk" -exec cp {} "$ROOT/output-apk/" \;
+echo ">> Saída de APKs:"
+find "$APP_DIR/build/outputs" -type f -iname "*.apk" -print
