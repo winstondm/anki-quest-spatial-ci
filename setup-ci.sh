@@ -186,3 +186,6 @@ cd "$ANKI_DIR"
 
 echo ">> Saída de APKs:"
 find "$APP_DIR/build/outputs" -type f -iname "*.apk" -print
+
+mkdir -p "$ROOT/output-apk"
+find "$APP_DIR/build/outputs" -type f -iname "*.apk" -exec cp {} "$ROOT/output-apk/" \;
