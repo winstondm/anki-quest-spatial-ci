@@ -4,56 +4,51 @@ set -euxo pipefail
 ROOT="$GITHUB_WORKSPACE"
 ANKI_DIR="$ROOT/Anki-Android"
 
-# 1) Clonar o AnkiDroid (branch principal)
+# 1) Clonar AnkiDroid (branch principal)
 git clone --depth=1 --branch main https://github.com/ankidroid/Anki-Android.git "$ANKI_DIR"
 
-# 2) Remover qualquer include antigo de :spatial-shell (se existir)
-if [ -f "$ANKI_DIR/settings.gradle.kts" ]; then
-  sed -i '/include(":spatial-shell")/d' "$ANKI_DIR/settings.gradle.kts" || true
-fi
-if [ -f "$ANKI_DIR/settings.gradle" ]; then
-  sed -i '/include(":spatial-shell")/d' "$ANKI_DIR/settings.gradle" || true
+# 2) Detectar o módulo do app (preferimos a pasta AnkiDroid; fallback por varredura)
+if [ -d "$ANKI_DIR/AnkiDroid" ]; then
+  APP_DIR="$ANKI_DIR/AnkiDroid"
+else
+  # procura o primeiro build.gradle(.kts) que tenha "namespace = \"com.ichi2.anki\"" ou aplique plugin de app via alias
+  APP_GRADLE_CAND="$(grep -rl --include=build.gradle --include=build.gradle.kts -E 'namespace\s*=\s*"com\.ichi2\.anki"|android\.application' "$ANKI_DIR" | head -n1 || true)"
+  if [ -z "$APP_GRADLE_CAND" ]; then
+    echo "ERRO: não consegui localizar o módulo do app. Estrutura mudou. Me envie a listagem de pastas na raiz do repo." >&2
+    exit 1
+  fi
+  APP_DIR="$(dirname "$APP_GRADLE_CAND")"
 fi
 
-# 3) Detectar AUTOMATICAMENTE o módulo de app (tem o plugin com.android.application)
-APP_GRADLE="$(grep -rl --include=build.gradle --include=build.gradle.kts -E '^\s*plugins\s*\{[^}]*id\((\"|\x27)com\.android\.application(\"|\x27)\)' "$ANKI_DIR" | head -n1 || true)"
-if [ -z "$APP_GRADLE" ]; then
-  echo "ERRO: não achei build.gradle(.kts) com 'com.android.application' no repo do Anki." >&2
-  echo "Estrutura mudou. Me envie a listagem de módulos (pasta raiz) que eu ajusto." >&2
+APP_GRADLE_KTS="$APP_DIR/build.gradle.kts"
+APP_GRADLE_GROOVY="$APP_DIR/build.gradle"
+if [ -f "$APP_GRADLE_KTS" ]; then
+  APP_GRADLE="$APP_GRADLE_KTS"
+  EXT="kts"
+elif [ -f "$APP_GRADLE_GROOVY" ]; then
+  APP_GRADLE="$APP_GRADLE_GROOVY"
+  EXT="gradle"
+else
+  echo "ERRO: não encontrei build.gradle(.kts) dentro de $APP_DIR" >&2
   exit 1
 fi
-APP_DIR="$(dirname "$APP_GRADLE")"
-APP_MODULE=":${APP_DIR##*/}"
-echo "Módulo de app detectado: $APP_MODULE ($APP_GRADLE)"
 
-# Helper: é KTS?
-EXT="${APP_GRADLE##*.}"   # kts ou gradle
+echo "Módulo app: $APP_DIR  (arquivo: $APP_GRADLE)"
 
-# 4) Injetar plugin do Spatial SDK no módulo do app
+# 3) Injetar plugin do Spatial SDK (no bloco plugins)
 if ! grep -q 'com.meta.spatial.plugin' "$APP_GRADLE"; then
   if [ "$EXT" = "kts" ]; then
     awk 'BEGIN{p=0}
-    {
-      print
-      if (!p && $0 ~ /plugins\s*\{/) {
-        print "    id(\"com.meta.spatial.plugin\") version \"0.8.0\""
-        p=1
-      }
-    }' "$APP_GRADLE" > "$APP_GRADLE.tmp" && mv "$APP_GRADLE.tmp" "$APP_GRADLE"
+    { print; if(!p && $0 ~ /plugins\s*\{/) { print "    id(\"com.meta.spatial.plugin\") version \"0.8.0\""; p=1 } }' \
+      "$APP_GRADLE" > "$APP_GRADLE.tmp" && mv "$APP_GRADLE.tmp" "$APP_GRADLE"
   else
-    # Groovy DSL
     awk 'BEGIN{p=0}
-    {
-      print
-      if (!p && $0 ~ /plugins\s*\{/) {
-        print "    id \"com.meta.spatial.plugin\" version \"0.8.0\""
-        p=1
-      }
-    }' "$APP_GRADLE" > "$APP_GRADLE.tmp" && mv "$APP_GRADLE.tmp" "$APP_GRADLE"
+    { print; if(!p && $0 ~ /plugins\s*\{/) { print "    id \"com.meta.spatial.plugin\" version \"0.8.0\""; p=1 } }' \
+      "$APP_GRADLE" > "$APP_GRADLE.tmp" && mv "$APP_GRADLE.tmp" "$APP_GRADLE"
   fi
 fi
 
-# 5) Adicionar dependências do Spatial SDK (se não tiver)
+# 4) Adicionar dependências do Spatial SDK (em dependencies { })
 if ! grep -q 'meta-spatial-sdk' "$APP_GRADLE"; then
   awk 'BEGIN{d=0}
   {
@@ -68,41 +63,20 @@ if ! grep -q 'meta-spatial-sdk' "$APP_GRADLE"; then
   }' "$APP_GRADLE" > "$APP_GRADLE.tmp" && mv "$APP_GRADLE.tmp" "$APP_GRADLE"
 fi
 
-# 6) Criar flavor 'spatial' (se o módulo NÃO tem flavors ainda)
-if ! grep -q 'productFlavors' "$APP_GRADLE"; then
-  awk '{
-    print
-    if ($0 ~ /android\s*\{/) {
-      print "    flavorDimensions += \"distribution\""
-      print "    productFlavors {"
-      print "        create(\"mobile\") { dimension = \"distribution\" }"
-      print "        create(\"spatial\") { dimension = \"distribution\" }"
-      print "    }"
-    }
-  }' "$APP_GRADLE" > "$APP_GRADLE.tmp" && mv "$APP_GRADLE.tmp" "$APP_GRADLE"
-else
-  # Já existem flavors: só alerta se não houver o 'spatial'
-  if ! grep -q 'create("spatial")' "$APP_GRADLE"; then
-    echo "AVISO: productFlavors já existem mas sem 'spatial'. Se o build falhar, edite o bloco de flavors e adicione create(\"spatial\")."
-  fi
-fi
+# 5) Criar arquivos em src/debug (Manifest overlay + ids + Activity)
+DBG_SRC="$APP_DIR/src/debug"
+mkdir -p "$DBG_SRC/res/values" "$DBG_SRC/java/com/ichi2/anki/spatial"
 
-# 7) Criar arquivos do flavor 'spatial': Manifest + ids + Activity
-SPATIAL_DIR="$APP_DIR/src/spatial"
-mkdir -p "$SPATIAL_DIR/res/values" "$SPATIAL_DIR/java/com/ichi2/anki/spatial"
-
-# 7.1) Manifest (overlay do flavor)
-cat > "$SPATIAL_DIR/AndroidManifest.xml" <<'EOF'
+# Manifest overlay (não remove o launcher existente; apenas adiciona o nosso)
+cat > "$DBG_SRC/AndroidManifest.xml" <<'EOF'
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
           xmlns:tools="http://schemas.android.com/tools"
           package="com.ichi2.anki">
   <application>
-    <!-- Suporte explícito a Quest 2/3/3S -->
     <meta-data
       android:name="com.oculus.supportedDevices"
       android:value="quest2|quest3|quest3s" />
 
-    <!-- Activity imersiva que registra/spawna os painéis 2D -->
     <activity
       android:name=".spatial.AnkiSpatialActivity"
       android:exported="true"
@@ -114,7 +88,6 @@ cat > "$SPATIAL_DIR/AndroidManifest.xml" <<'EOF'
       </intent-filter>
     </activity>
 
-    <!-- Permite embutir as Activities existentes -->
     <activity
       android:name=".CollectionOpenActivity"
       tools:node="merge"
@@ -129,16 +102,16 @@ cat > "$SPATIAL_DIR/AndroidManifest.xml" <<'EOF'
 </manifest>
 EOF
 
-# 7.2) ids.xml (registrations)
-cat > "$SPATIAL_DIR/res/values/ids.xml" <<'EOF'
+# ids.xml
+cat > "$DBG_SRC/res/values/ids.xml" <<'EOF'
 <resources>
   <item name="panel_decks" type="id"/>
   <item name="panel_review" type="id"/>
 </resources>
 EOF
 
-# 7.3) Activity (registra e "spawna" os paineis 2D)
-cat > "$SPATIAL_DIR/java/com/ichi2/anki/spatial/AnkiSpatialActivity.kt" <<'EOF'
+# Activity que registra e spawna os paineis 2D
+cat > "$DBG_SRC/java/com/ichi2/anki/spatial/AnkiSpatialActivity.kt" <<'EOF'
 package com.ichi2.anki.spatial
 
 import android.os.Bundle
@@ -184,17 +157,16 @@ class AnkiSpatialActivity : ComponentActivity() {
             }
         )
 
-        // Criar (spawn) os paineis em frente ao usuário (~1,2 m)
         Entity.createPanelEntity(R.id.panel_decks, Transform(Pose(Vector3(0.0f, 0.0f, -1.2f))))
         Entity.createPanelEntity(R.id.panel_review, Transform(Pose(Vector3(0.8f, 0.0f, -1.2f))))
     }
 }
 EOF
 
-# 8) Build da variant 'spatialDebug' do MÓDULO DETECTADO
+# 6) Build debug (funciona para sideload no Quest)
 cd "$ANKI_DIR"
-./gradlew --no-daemon "$APP_MODULE:assembleSpatialDebug"
+./gradlew --no-daemon "$APP_DIR:assembleDebug" || ./gradlew --no-daemon :AnkiDroid:assembleDebug
 
-# 9) Copiar APK(s) para a saída do pipeline
+# 7) Exportar APK(s)
 mkdir -p "$ROOT/output-apk"
 find "$ANKI_DIR" -type f -name "*.apk" -exec cp {} "$ROOT/output-apk/" \;
