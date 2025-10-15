@@ -121,29 +121,20 @@ import com.meta.spatial.toolkit.IntentPanelRegistration
 import com.meta.spatial.toolkit.UIPanelSettings
 import com.meta.spatial.toolkit.QuadShapeOptions
 import com.meta.spatial.toolkit.DpDisplayOptions
-import com.meta.spatial.toolkit.Panel
 import com.meta.spatial.toolkit.Transform
+import com.meta.spatial.toolkit.createPanelEntity   // <<-- IMPORT NECESSÁRIO
 import com.meta.spatial.core.Entity
 import com.meta.spatial.core.Pose
 import com.meta.spatial.core.Vector3
 import com.meta.spatial.core.Quaternion
 import com.ichi2.anki.R
 
-/**
- * Activity imersiva de debug que registra e instancia um painel 2D
- * com a UI padrão do AnkiDroid (via intent do launcher do próprio app).
- *
- * Requer Spatial SDK 0.8.0.
- */
 class AnkiSpatialActivity : AppSystemActivity() {
 
     override fun registerPanels(): List<PanelRegistration> {
-        // Usamos IntentPanelRegistration para não depender de nomes de Activities internas do Anki.
         val ankiIntentPanel = IntentPanelRegistration(
             registrationId = R.id.anki_panel,
             intentCreator = { _ ->
-                // Pega o intent de launcher do PRÓPRIO pacote (AnkiDroid)
-                // e roda dentro do painel.
                 packageManager.getLaunchIntentForPackage(packageName)?.apply {
                     addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
                 } ?: Intent(Intent.ACTION_MAIN).apply {
@@ -163,18 +154,10 @@ class AnkiSpatialActivity : AppSystemActivity() {
 
     override fun onSceneReady() {
         super.onSceneReady()
-
-        // Cria uma entidade de painel posicionada ~1.2m à frente, 1.3m de altura
+        // Cria o painel ~1,2 m à frente
         Entity.createPanelEntity(
             R.id.anki_panel,
-            Transform(
-                Pose(
-                    Vector3(0f, 1.3f, -1.2f),
-                    // rotação padrão “de frente”
-                    Quaternion(1.0f, 0f, 0f, 0f)
-                )
-            ),
-            // Dica: adicione Grabbable() se quiser pegar/mover o painel com as mãos
+            Transform(Pose(Vector3(0f, 1.3f, -1.2f), Quaternion(1f, 0f, 0f, 0f)))
         )
     }
 }
